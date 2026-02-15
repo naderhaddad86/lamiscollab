@@ -117,30 +117,36 @@ class LiquidityResult:
 # ============================================================================
 
 class RiskEngine:
-    
     @staticmethod
     def calc_var(portfolio, returns, conf=0.99, horizon=10, sims=100000):
         mu, sigma = np.mean(returns), np.std(returns)
         skew, kurt = stats.skew(returns), stats.kurtosis(returns)
         sigma_h, mu_h = sigma * np.sqrt(horizon), mu * horizon
-        
+    
         z = norm.ppf(1 - conf)
         param_var = abs(portfolio * (mu_h + z * sigma_h))
-        
+    
         hist_var = abs(portfolio * np.percentile(returns * np.sqrt(horizon), (1-conf)*100))
-        
+    
         np.random.seed(42)
-        sim_ret = np.random.normal(mu_h, sigma_h, sims)
-        sim_vals = portfolio * (1 + sim_ret)
+        # CHANGED: Previously used simple returns: sim_vals = portfolio * (1 + sim_ret)
+        # Now using GBM (Geometric Brownian Motion): dS = μS dt + σS dW
+        # GBM assumes prices are log-normally distributed, not normally distributed
+        sim_ret = np.random.normal(mu_h, sigma_h, sims)  # Same scaling as parametric VaR
+        sim_vals = portfolio * np.exp(sim_ret)  # CHANGED: Using exp() for log-normal prices
         mc_var = portfolio - np.percentile(sim_vals, (1-conf)*100)
-        
+    
+        # LEARNED: Simple returns (1 + ret) can become negative, allowing negative prices
+        # GBM with exp() ensures prices always stay positive, which is realistic for assets
+        # For small returns, exp(ret) ≈ 1 + ret, but GBM is theoretically correct
+    
         z_cf = z + (z**2-1)*skew/6 + (z**3-3*z)*kurt/24 - (2*z**3-5*z)*skew**2/36
         cf_var = abs(portfolio * (mu_h + z_cf * sigma_h))
-        
+    
         var_thresh = np.percentile(sim_ret, (1-conf)*100)
         tail = sim_ret[sim_ret <= var_thresh]
         es = -portfolio * np.mean(tail) if len(tail) > 0 else mc_var * 1.2
-        
+    
         return VaRResult(param_var, hist_var, mc_var, cf_var, es, skew, kurt, sim_vals)
     
     @staticmethod
